@@ -199,8 +199,8 @@ def get_entity_claims(
     """
     Get all claims (facts) about a Wikidata entity.
     
-    Uses the Textify service to convert structured Wikidata claims
-    into human-readable text statements that can be used for fact-checking.
+    Uses native Wikidata API (wbgetentities) for faster, more reliable access.
+    Falls back to Textify if needed.
     
     Args:
         entity_id: Wikidata entity ID (e.g., "Q937")
@@ -213,10 +213,108 @@ def get_entity_claims(
         >>> claims = get_entity_claims("Q937")
         >>> for c in claims[:3]:
         ...     print(c["text"])
-        "Albert Einstein | occupation | physicist"
-        "Albert Einstein | birth date | 14 March 1879"
-        "Albert Einstein | notable work | theory of relativity"
+        "Albert Einstein (Q937) | occupation (P106) | physicist"
     """
+    # First get entity label
+    params = {
+        "action": "wbgetentities",
+        "ids": entity_id,
+        "props": "labels|descriptions|claims",
+        "languages": language,
+        "format": "json",
+    }
+    
+    try:
+        response = requests.get(
+            WD_API_URI,
+            params=params,
+            headers={"User-Agent": USER_AGENT},
+            timeout=15
+        )
+        response.raise_for_status()
+        data = response.json()
+        
+        entity = data.get("entities", {}).get(entity_id, {})
+        label = entity.get("labels", {}).get(language, {}).get("value", entity_id)
+        description = entity.get("descriptions", {}).get(language, {}).get("value", "")
+        
+        statements = []
+        
+        # Add description as first statement
+        if description:
+            statements.append({
+                "subject": f"{label} ({entity_id})",
+                "property": "description",
+                "value": description,
+                "text": f"{label} ({entity_id}) | description | {description}"
+            })
+        
+        # Process claims
+        claims = entity.get("claims", {})
+        for prop_id, claim_list in claims.items():
+            for claim in claim_list:
+                mainsnak = claim.get("mainsnak", {})
+                if mainsnak.get("snaktype") != "value":
+                    continue
+                
+                datavalue = mainsnak.get("datavalue", {})
+                value_type = datavalue.get("type", "")
+                value = datavalue.get("value", "")
+                
+                # Format value based on type
+                if value_type == "wikibase-entityid":
+                    value_id = value.get("id", "")
+                    value_str = value_id  # Could resolve label but adds latency
+                elif value_type == "time":
+                    value_str = value.get("time", "")[:10].replace("+", "")  # Just date
+                elif value_type == "string" or value_type == "monolingualtext":
+                    value_str = value if isinstance(value, str) else value.get("text", str(value))
+                elif value_type == "quantity":
+                    value_str = value.get("amount", str(value))
+                else:
+                    value_str = str(value)
+                
+                statements.append({
+                    "subject": f"{label} ({entity_id})",
+                    "property": prop_id,
+                    "value": value_str,
+                    "text": f"{label} ({entity_id}) | {prop_id} | {value_str}"
+                })
+                
+                # Add qualifiers (like point in time for awards)
+                qualifiers = claim.get("qualifiers", {})
+                for qual_prop, qual_list in qualifiers.items():
+                    for qual in qual_list:
+                        qual_value = qual.get("datavalue", {}).get("value", "")
+                        if isinstance(qual_value, dict):
+                            if "time" in qual_value:
+                                qual_str = qual_value["time"][:10].replace("+", "")
+                            elif "id" in qual_value:
+                                qual_str = qual_value["id"]
+                            else:
+                                qual_str = str(qual_value)
+                        else:
+                            qual_str = str(qual_value)
+                        
+                        statements.append({
+                            "subject": f"{label} ({entity_id})",
+                            "property": qual_prop,
+                            "value": qual_str,
+                            "text": f"{label} ({entity_id}) | {qual_prop} | {qual_str}"
+                        })
+        
+        return statements
+        
+    except Exception as e:
+        # Fallback to Textify if native API fails
+        return _get_entity_claims_textify(entity_id, language)
+
+
+def _get_entity_claims_textify(
+    entity_id: str,
+    language: str = "en"
+) -> List[Dict[str, str]]:
+    """Fallback: Get claims via Textify service."""
     params = {
         "id": entity_id,
         "external_ids": "false",
@@ -239,7 +337,6 @@ def get_entity_claims(
     raw_text = response.json() if response.headers.get("content-type", "").startswith("application/json") else response.text
     
     if isinstance(raw_text, str):
-        # Parse triplet format: "Subject: Property: Value"
         statements = []
         for line in raw_text.strip().split("\n"):
             if ": " in line:

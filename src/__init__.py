@@ -2,22 +2,22 @@
 LLM Wikidata Grounding - Source Package
 
 A fact-checking system that grounds claims against Wikidata's
-structured knowledge base using a pipeline approach:
+structured knowledge base using a hybrid pipeline:
 
-1. Vector/Keyword Search - Find relevant entities
+1. Vector Search - Find relevant entities semantically
 2. Statement Retrieval - Get Wikidata claims
 3. Reranking - Filter by relevance (Cross-Encoder)
-4. NLI Classification - Determine support/contradiction
+4. Ollama LLM - Natural language reasoning for verdict
 
 Usage:
-    from src import FactChecker, verify
+    from src import HybridFactChecker, verify
     
     # Quick verification
     result = verify("Einstein discovered relativity")
     print(result.verdict)  # SUPPORTED
     
     # Full control
-    checker = FactChecker(verbose=True)
+    checker = HybridFactChecker(model="qwen2.5:7b", verbose=True)
     result = checker.check("Marie Curie won two Nobel Prizes")
 """
 
@@ -34,21 +34,19 @@ from .reranker import (
     filter_relevant_statements,
 )
 
-from .nli_classifier import (
-    NLIClassifier,
+from .ollama_classifier import (
+    OllamaClassifier,
     Verdict,
     ClassificationResult,
-    verify_claim,
 )
 
-from .pipeline import (
-    FactChecker,
+from .hybrid_pipeline import (
+    HybridFactChecker,
     FactCheckResult,
-    VerificationResult,
     verify,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = [
     # Wikidata API
     "search_entities",
@@ -59,14 +57,12 @@ __all__ = [
     "Reranker",
     "RankedStatement",
     "filter_relevant_statements",
-    # NLI
-    "NLIClassifier",
+    # Ollama Classifier
+    "OllamaClassifier",
     "Verdict",
     "ClassificationResult",
-    "verify_claim",
-    # Pipeline
-    "FactChecker",
+    # Hybrid Pipeline
+    "HybridFactChecker",
     "FactCheckResult",
-    "VerificationResult",
     "verify",
 ]
