@@ -21,8 +21,11 @@ Claim → Vector Search → Statement Retrieval → Reranking → Ollama LLM →
 | "Ibn al-Haytham was born in Basra" | ✓ SUPPORTED | 90% |
 | "Özlem Türeci is the co-founder of BioNTech" | ✓ SUPPORTED | 90% |
 | "Al-Khwarizmi lived in the 9th century" | ✓ SUPPORTED | 90% |
+| "Aziz Sancar won Nobel Prize in Physics in 2020" | ✗ REFUTED | 90% |
+| "Einstein was born in France" | ✗ REFUTED | 90% |
 
 > **Note**: Using local Ollama LLM (qwen2.5:7b) provides much higher confidence than NLI models (~58-76%).
+
 
 ---
 
