@@ -18,7 +18,7 @@ Claim → Vector Search → Statement Retrieval → Reranking → Ollama LLM →
 | Claim | Verdict | Confidence |
 |-------|---------|------------|
 | "Aziz Sancar won the Nobel Prize in Chemistry in 2015" | ✓ SUPPORTED | **90%** |
-| "Ibn al-Haytham was born in Basra" | ✓ SUPPORTED | 90% |
+| "Albert Einstein was born in Germany" | ✓ SUPPORTED | 90% |
 | "Özlem Türeci is the co-founder of BioNTech" | ✓ SUPPORTED | 90% |
 | "Al-Khwarizmi lived in the 9th century" | ✓ SUPPORTED | 90% |
 | "Aziz Sancar won Nobel Prize in Physics in 2020" | ✗ REFUTED | 90% |
@@ -46,8 +46,8 @@ Claim → Vector Search → Statement Retrieval → Reranking → Ollama LLM →
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │  2. STATEMENT RETRIEVAL                                              │
-│     API: wikidata.org/w/api.php (wbgetclaims)                        │
-│     Result: 131 statements about matched entities                    │
+│     API: wikidata.org/w/api.php (wbgetentities)                      │
+│     Result: ~229 statements about matched entities                   │
 └─────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
@@ -114,7 +114,7 @@ python verify_setup.py
 python src/hybrid_pipeline.py "Aziz Sancar won Nobel Prize in Chemistry"
 
 # Verbose mode
-python src/hybrid_pipeline.py -v "Ibn al-Haytham was born in Basra"
+python src/hybrid_pipeline.py -v "Aziz Sancar won Nobel Prize in Chemistry in 2015"
 
 # Interactive mode
 python src/hybrid_pipeline.py
@@ -148,15 +148,23 @@ results = vector_search("Turkish scientist Nobel Prize")
 # → [{"id": "Q15118973", "score": 0.86}, ...]
 ```
 
-### 2. Cross-Encoder Reranking
-Filter thousands of statements to the most relevant:
+### 2. Label Resolution
+Batch resolution of Wikidata IDs to human-readable labels:
+```python
+from src.wikidata_api import resolve_labels
+labels = resolve_labels(["P106", "Q169470"])
+# → {"P106": "occupation", "Q169470": "physicist"}
+```
+
+### 3. Cross-Encoder Reranking
+Filter hundreds of statements to the most relevant:
 ```python
 from src.reranker import Reranker
 reranker = Reranker()
 ranked = reranker.rerank(claim, statements, top_k=10)
 ```
 
-### 3. Ollama LLM Classification
+### 4. Ollama LLM Classification
 Natural language reasoning with local LLM:
 ```python
 from src.ollama_classifier import OllamaClassifier
@@ -195,19 +203,43 @@ checker = HybridFactChecker(model="qwen2.5:7b")
 
 ---
 
+## 🧪 Running Tests
+
+```bash
+# Install dev dependencies
+pip install -r requirements-dev.txt
+
+# Run all tests
+python -m pytest tests/ -v
+
+# Run with coverage
+python -m pytest tests/ -v --cov=src
+```
+
+---
+
 ## 📁 Project Structure
 
 ```
 llm-wikidata-grounding/
 ├── src/
-│   ├── wikidata_api.py      # Vector search + Wikidata APIs
+│   ├── wikidata_api.py      # Vector search + Wikidata APIs + Label resolution
 │   ├── reranker.py          # Cross-Encoder reranking
 │   ├── ollama_classifier.py # Ollama LLM classification
 │   ├── hybrid_pipeline.py   # Main hybrid pipeline ⭐
-│   ├── pipeline.py          # NLI-based pipeline (alternative)
-│   └── nli_classifier.py    # NLI model (alternative)
+│   └── legacy/              # NLI-based pipeline (alternative)
+│       ├── pipeline.py
+│       └── nli_classifier.py
+├── tests/
+│   ├── conftest.py          # Shared fixtures
+│   ├── test_wikidata_api.py
+│   ├── test_reranker.py
+│   ├── test_ollama_classifier.py
+│   └── test_hybrid_pipeline.py
 ├── examples/
+│   └── basic_example.py
 ├── requirements.txt
+├── requirements-dev.txt
 ├── verify_setup.py
 └── README.md
 ```
