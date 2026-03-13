@@ -22,6 +22,15 @@ import requests
 from typing import Dict, List, Optional, Any
 from urllib.parse import urlencode
 
+
+# =============================================================================
+# Label Cache
+# =============================================================================
+
+# Module-level cache for resolved entity/property labels
+# Maps ID (e.g., "P106", "Q169470") to label (e.g., "occupation", "physicist")
+_label_cache: Dict[str, str] = {}
+
 # =============================================================================
 # API Endpoints
 # =============================================================================
@@ -189,6 +198,74 @@ def vector_search(
 
 
 # =============================================================================
+# Label Resolution (Batch)
+# =============================================================================
+
+def resolve_labels(
+    ids: List[str],
+    language: str = "en"
+) -> Dict[str, str]:
+    """
+    Resolve multiple Wikidata IDs to their labels in a single API call.
+    
+    Uses batch wbgetentities to minimize API requests.
+    Results are cached in the module-level _label_cache.
+    
+    Args:
+        ids: List of Wikidata IDs (e.g., ["P106", "Q169470", "P27"])
+        language: Language code for labels
+    
+    Returns:
+        Dictionary mapping ID to label
+        
+    Example:
+        >>> labels = resolve_labels(["P106", "Q169470"])
+        >>> print(labels)
+        {"P106": "occupation", "Q169470": "physicist"}
+    """
+    global _label_cache
+    
+    # Filter out already-cached and invalid IDs
+    uncached = [i for i in ids if i and i not in _label_cache and re.match(r'^[PQ]\d+$', i)]
+    
+    if not uncached:
+        return {i: _label_cache.get(i, i) for i in ids}
+    
+    # Wikidata API supports up to 50 IDs per request
+    for batch_start in range(0, len(uncached), 50):
+        batch = uncached[batch_start:batch_start + 50]
+        
+        params = {
+            "action": "wbgetentities",
+            "ids": "|".join(batch),
+            "props": "labels",
+            "languages": language,
+            "format": "json",
+        }
+        
+        try:
+            response = requests.get(
+                WD_API_URI,
+                params=params,
+                headers={"User-Agent": USER_AGENT},
+                timeout=15
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            entities = data.get("entities", {})
+            for eid, edata in entities.items():
+                label = edata.get("labels", {}).get(language, {}).get("value", "")
+                _label_cache[eid] = label if label else eid
+        except Exception:
+            # On failure, cache IDs as their own labels (graceful degradation)
+            for eid in batch:
+                _label_cache[eid] = eid
+    
+    return {i: _label_cache.get(i, i) for i in ids}
+
+
+# =============================================================================
 # Entity Claims
 # =============================================================================
 
@@ -249,9 +326,36 @@ def get_entity_claims(
                 "text": f"{label} ({entity_id}) | description | {description}"
             })
         
-        # Process claims
+        # Process claims — collect all IDs for batch label resolution
         claims = entity.get("claims", {})
+        ids_to_resolve = set(claims.keys())  # property IDs
+        
+        # First pass: collect all entity-value and qualifier IDs
         for prop_id, claim_list in claims.items():
+            for claim in claim_list:
+                mainsnak = claim.get("mainsnak", {})
+                if mainsnak.get("snaktype") != "value":
+                    continue
+                datavalue = mainsnak.get("datavalue", {})
+                if datavalue.get("type") == "wikibase-entityid":
+                    val_id = datavalue.get("value", {}).get("id", "")
+                    if val_id:
+                        ids_to_resolve.add(val_id)
+                # Qualifier IDs
+                for qual_prop, qual_list in claim.get("qualifiers", {}).items():
+                    ids_to_resolve.add(qual_prop)
+                    for qual in qual_list:
+                        qv = qual.get("datavalue", {}).get("value", "")
+                        if isinstance(qv, dict) and "id" in qv:
+                            ids_to_resolve.add(qv["id"])
+        
+        # Batch resolve all IDs to human-readable labels
+        resolved = resolve_labels(list(ids_to_resolve), language=language)
+        
+        # Second pass: build statements with resolved labels
+        for prop_id, claim_list in claims.items():
+            prop_label = resolved.get(prop_id, prop_id)
+            
             for claim in claim_list:
                 mainsnak = claim.get("mainsnak", {})
                 if mainsnak.get("snaktype") != "value":
@@ -264,7 +368,8 @@ def get_entity_claims(
                 # Format value based on type
                 if value_type == "wikibase-entityid":
                     value_id = value.get("id", "")
-                    value_str = value_id  # Could resolve label but adds latency
+                    value_label = resolved.get(value_id, value_id)
+                    value_str = f"{value_label} ({value_id})" if value_label != value_id else value_id
                 elif value_type == "time":
                     value_str = value.get("time", "")[:10].replace("+", "")  # Just date
                 elif value_type == "string" or value_type == "monolingualtext":
@@ -274,23 +379,30 @@ def get_entity_claims(
                 else:
                     value_str = str(value)
                 
+                prop_display = f"{prop_label} ({prop_id})" if prop_label != prop_id else prop_id
+                
                 statements.append({
                     "subject": f"{label} ({entity_id})",
-                    "property": prop_id,
+                    "property": prop_display,
                     "value": value_str,
-                    "text": f"{label} ({entity_id}) | {prop_id} | {value_str}"
+                    "text": f"{label} ({entity_id}) | {prop_display} | {value_str}"
                 })
                 
                 # Add qualifiers (like point in time for awards)
                 qualifiers = claim.get("qualifiers", {})
                 for qual_prop, qual_list in qualifiers.items():
+                    qual_prop_label = resolved.get(qual_prop, qual_prop)
+                    qual_prop_display = f"{qual_prop_label} ({qual_prop})" if qual_prop_label != qual_prop else qual_prop
+                    
                     for qual in qual_list:
                         qual_value = qual.get("datavalue", {}).get("value", "")
                         if isinstance(qual_value, dict):
                             if "time" in qual_value:
                                 qual_str = qual_value["time"][:10].replace("+", "")
                             elif "id" in qual_value:
-                                qual_str = qual_value["id"]
+                                qual_id = qual_value["id"]
+                                qual_label = resolved.get(qual_id, qual_id)
+                                qual_str = f"{qual_label} ({qual_id})" if qual_label != qual_id else qual_id
                             else:
                                 qual_str = str(qual_value)
                         else:
@@ -298,9 +410,9 @@ def get_entity_claims(
                         
                         statements.append({
                             "subject": f"{label} ({entity_id})",
-                            "property": qual_prop,
+                            "property": qual_prop_display,
                             "value": qual_str,
-                            "text": f"{label} ({entity_id}) | {qual_prop} | {qual_str}"
+                            "text": f"{label} ({entity_id}) | {qual_prop_display} | {qual_str}"
                         })
         
         return statements

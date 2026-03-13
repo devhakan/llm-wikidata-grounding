@@ -7,6 +7,8 @@ Verifies that all components are correctly installed:
 2. Required packages
 3. Wikidata API access
 4. ML models
+5. Ollama LLM
+6. Source modules
 
 Usage:
     python verify_setup.py
@@ -18,7 +20,7 @@ import os
 
 def check_python_version():
     """Verify Python version is 3.10+."""
-    print("[1/5] Checking Python version...")
+    print("[1/6] Checking Python version...")
     
     version = sys.version_info
     if version.major >= 3 and version.minor >= 10:
@@ -31,13 +33,12 @@ def check_python_version():
 
 def check_dependencies():
     """Verify required packages are installed."""
-    print("[2/5] Checking dependencies...")
+    print("[2/6] Checking dependencies...")
     
     packages = {
         "requests": "HTTP client",
-        "transformers": "NLI models",
-        "sentence_transformers": "Cross-Encoder",
-        "torch": "PyTorch"
+        "sentence_transformers": "Cross-Encoder reranking",
+        "torch": "PyTorch",
     }
     
     all_ok = True
@@ -54,7 +55,7 @@ def check_dependencies():
 
 def check_wikidata():
     """Verify Wikidata API is accessible."""
-    print("[3/5] Checking Wikidata API...")
+    print("[3/6] Checking Wikidata API...")
     
     try:
         import requests
@@ -89,7 +90,7 @@ def check_wikidata():
 
 def check_vector_search():
     """Check if Wikidata Vector Database is accessible."""
-    print("[4/5] Checking vector search...")
+    print("[4/6] Checking vector search...")
     
     try:
         import requests
@@ -116,26 +117,58 @@ def check_vector_search():
         return True  # Not critical - fallback available
 
 
+def check_ollama():
+    """Verify Ollama is running and has models available."""
+    print("[5/6] Checking Ollama LLM...")
+    
+    try:
+        import requests
+        
+        response = requests.get(
+            "http://localhost:11434/api/tags",
+            timeout=5
+        )
+        response.raise_for_status()
+        
+        models = response.json().get("models", [])
+        model_names = [m.get("name", "") for m in models]
+        
+        if models:
+            print(f"      ✓ Ollama is running ({len(models)} model(s) available)")
+            for name in model_names[:3]:
+                print(f"        • {name}")
+            return True
+        else:
+            print("      ⚠ Ollama is running but no models installed")
+            print("        Run: ollama pull qwen2.5:7b")
+            return False
+            
+    except Exception as e:
+        print(f"      ✗ Ollama not reachable: {e}")
+        print("        Run: ollama serve")
+        return False
+
+
 def check_src_import():
-    """Verify src package can be imported."""
-    print("[5/5] Checking src package...")
+    """Verify src package can be imported (hybrid pipeline modules)."""
+    print("[6/6] Checking src package...")
     
     try:
         src_path = os.path.join(os.path.dirname(__file__), "src")
         sys.path.insert(0, src_path)
         
-        # Test imports
+        # Test imports — hybrid pipeline modules
         import wikidata_api
         print("      ✓ wikidata_api module")
         
         import reranker
         print("      ✓ reranker module")
         
-        import nli_classifier
-        print("      ✓ nli_classifier module")
+        import ollama_classifier
+        print("      ✓ ollama_classifier module")
         
-        import pipeline
-        print("      ✓ pipeline module")
+        import hybrid_pipeline
+        print("      ✓ hybrid_pipeline module")
         
         return True
         
@@ -156,6 +189,7 @@ def main():
         check_dependencies(),
         check_wikidata(),
         check_vector_search(),
+        check_ollama(),
         check_src_import(),
     ]
     
@@ -169,15 +203,19 @@ def main():
         print(f"✓ All {total} checks passed! You're ready to go.")
         print()
         print("Try running:")
-        print("  python -m src.pipeline 'Einstein discovered relativity'")
+        print("  python src/hybrid_pipeline.py -v 'Einstein discovered relativity'")
         print()
         print("Or:")
-        print("  python examples/basic_example.py")
+        print("  python src/hybrid_pipeline.py  # interactive mode")
     else:
         print(f"⚠ {passed}/{total} checks passed. Please fix the issues above.")
         print()
         print("Install missing packages:")
         print("  pip install -r requirements.txt")
+        print()
+        print("Start Ollama:")
+        print("  ollama serve")
+        print("  ollama pull qwen2.5:7b")
     
     print("=" * 60)
     
