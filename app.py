@@ -5,6 +5,7 @@ A visual demo interface for the fact-checking pipeline.
 Run with: python app.py
 """
 
+import re
 import sys
 import os
 import time
@@ -23,6 +24,46 @@ app.config["SECRET_KEY"] = os.urandom(24)
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Regex patterns for cleaning evidence format
+_QID_PATTERN = re.compile(r'\s*\(Q\d+\)')
+_PID_PATTERN = re.compile(r'\s*\(P\d+\)')
+_QID_EXTRACT = re.compile(r'\(Q(\d+)\)')
+
+
+def format_evidence(raw: str) -> dict:
+    """Parse raw evidence string into structured, human-readable format.
+    
+    Input:  'Albert Einstein (Q937) | date of death (P570) | 1955-04-18'
+    Output: {'entity': 'Albert Einstein', 'property': 'date of death',
+             'value': '1955-04-18', 'entity_url': 'https://www.wikidata.org/wiki/Q937'}
+    """
+    parts = [p.strip() for p in raw.split('|')]
+    if len(parts) >= 3:
+        entity_raw = parts[0]
+        prop_raw = parts[1]
+        value_raw = ' | '.join(parts[2:])  # rejoin if value had pipes
+    elif len(parts) == 2:
+        entity_raw = parts[0]
+        prop_raw = ''
+        value_raw = parts[1]
+    else:
+        return {'entity': raw, 'property': '', 'value': '', 'entity_url': ''}
+    
+    # Extract QID for link
+    qid_match = _QID_EXTRACT.search(entity_raw)
+    entity_url = f'https://www.wikidata.org/wiki/Q{qid_match.group(1)}' if qid_match else ''
+    
+    # Strip Q/P IDs from display text
+    entity = _QID_PATTERN.sub('', entity_raw).strip()
+    prop = _PID_PATTERN.sub('', prop_raw).strip()
+    value = _QID_PATTERN.sub('', value_raw).strip()
+    
+    return {'entity': entity, 'property': prop, 'value': value, 'entity_url': entity_url}
+
+
+# Register as Jinja filter
+app.jinja_env.filters['format_evidence'] = format_evidence
 
 # Lazy-loaded checker
 _checker = None

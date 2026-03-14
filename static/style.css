@@ -375,22 +375,53 @@ body {
     gap: var(--spacing-50);
 }
 
-.evidence-list {
-    list-style: none;
+.evidence-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-small);
 }
 
-.evidence-item {
-    padding: var(--spacing-75) var(--spacing-100);
-    font-size: var(--font-size-small);
-    color: var(--color-base);
+.evidence-table thead th {
+    text-align: left;
+    padding: var(--spacing-50) var(--spacing-75);
+    font-weight: var(--font-weight-bold);
+    color: var(--color-base--subtle);
+    border-bottom: 2px solid var(--border-color-base);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.evidence-table tbody td {
+    padding: var(--spacing-75);
     border-bottom: 1px solid var(--border-color-subtle);
-    font-family: var(--font-family-monospace);
+    color: var(--color-base);
     line-height: var(--line-height-small);
+    vertical-align: top;
     word-break: break-word;
 }
 
-.evidence-item:last-child {
+.evidence-table tbody tr:last-child td {
     border-bottom: none;
+}
+
+.evidence-table tbody tr:nth-child(even) {
+    background: var(--background-color-interactive-subtle);
+}
+
+.evidence-link {
+    color: var(--color-progressive);
+    text-decoration: none;
+    font-weight: var(--font-weight-bold);
+}
+
+.evidence-link:hover {
+    text-decoration: underline;
+}
+
+.evidence-prop {
+    color: var(--color-base--subtle);
+    font-style: italic;
 }
 
 /* --- Pipeline Steps --- */

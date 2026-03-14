@@ -105,11 +105,31 @@
             <div class="evidence-title">
                 📋 Evidence from Wikidata ({{ result.evidence | length }} statements)
             </div>
-            <ul class="evidence-list">
-                {% for e in result.evidence[:8] %}
-                <li class="evidence-item">{{ e }}</li>
-                {% endfor %}
-            </ul>
+            <table class="evidence-table">
+                <thead>
+                    <tr>
+                        <th>Entity</th>
+                        <th>Property</th>
+                        <th>Value</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for e in result.evidence[:8] %}
+                    {% set parsed = e | format_evidence %}
+                    <tr>
+                        <td>
+                            {% if parsed.entity_url %}
+                            <a href="{{ parsed.entity_url }}" target="_blank" class="evidence-link">{{ parsed.entity }}</a>
+                            {% else %}
+                            {{ parsed.entity }}
+                            {% endif %}
+                        </td>
+                        <td class="evidence-prop">{{ parsed.property }}</td>
+                        <td>{{ parsed.value }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
         </div>
         {% endif %}
 
