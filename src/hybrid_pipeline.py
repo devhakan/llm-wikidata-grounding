@@ -22,7 +22,7 @@ from dataclasses import dataclass
 if __name__ == "__main__" or __package__ is None:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from wikidata_api import vector_search, get_entity_claims
+from wikidata_api import vector_search, get_entity_claims, format_statement_for_nli
 from reranker import Reranker
 from ollama_classifier import OllamaClassifier, Verdict, ClassificationResult
 
@@ -133,18 +133,27 @@ class HybridFactChecker:
         if not all_statements:
             return _not_enough_info(claim, "No statements found for entities.", entity_ids)
 
-        # Step 3: Rerank
+        # Step 3: Rerank using NLI-friendly format
+        # Convert "Entity (Q123) | property (P456) | value" to natural language
+        # so the cross-encoder can better match semantic meaning
         self._log("\n[3/4] Reranking statements...")
-        ranked = self.reranker.rerank(claim=claim, statements=all_statements, top_k=top_k)
-        relevant_evidence = [r.text for r in ranked]
+        nli_statements = [format_statement_for_nli(s) for s in all_statements]
+        nli_to_original = dict(zip(nli_statements, all_statements))
+
+        ranked = self.reranker.rerank(claim=claim, statements=nli_statements, top_k=top_k)
+
+        # Map back to original format for display (with Wikidata IDs)
+        relevant_evidence = [nli_to_original.get(r.text, r.text) for r in ranked]
+        # NLI format for LLM reasoning
+        relevant_nli = [r.text for r in ranked]
         self._log(f"    Kept {len(relevant_evidence)} relevant statements")
 
         if not relevant_evidence:
             return _not_enough_info(claim, "No relevant evidence after filtering.", entity_ids)
 
-        # Step 4: Classify with Ollama
+        # Step 4: Classify with Ollama (using NLI format for better reasoning)
         self._log(f"\n[4/4] Classifying with {self.model}...")
-        result = self.classifier.classify(claim, relevant_evidence)
+        result = self.classifier.classify(claim, relevant_nli)
 
         self._log(f"    Verdict: {result.verdict.value}")
         self._log(f"    Confidence: {result.confidence:.0%}")
@@ -154,7 +163,7 @@ class HybridFactChecker:
             verdict=result.verdict.value,
             confidence=result.confidence,
             reasoning=result.reasoning,
-            evidence=relevant_evidence[:5],
+            evidence=relevant_evidence,
             entities_found=entity_ids,
         )
 
