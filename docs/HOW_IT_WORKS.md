@@ -38,6 +38,7 @@ The hybrid pipeline combines four stages to verify claims against Wikidata:
 ┌─────────────────────────────────────────────────────────────────┐
 │  STAGE 4: LLM Classification (ollama_classifier.py)             │
 │  Ollama (qwen2.5:7b) → Reason over evidence → Verdict          │
+│  Multi-strategy response parsing → Robust verdict extraction    │
 │  Output: SUPPORTED / REFUTED / NOT_ENOUGH_INFO + confidence     │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -107,6 +108,18 @@ CONFIDENCE: [HIGH/MEDIUM/LOW]
 REASONING: [one sentence explanation]
 ```
 
+**Robust Verdict Parsing**: LLMs don't always follow the exact format, so the parser uses a three-tier strategy:
+
+| Priority | Strategy | Example |
+|----------|----------|---------|
+| 1 | Exact `VERDICT: X` format | `VERDICT: SUPPORTED` |
+| 2 | Standalone keyword in first 200 chars | `The claim is SUPPORTED by...` |
+| 3 | Reasoning-based inference | `...directly supports the claim...` → SUPPORTED |
+
+The reasoning-based inference detects phrases like:
+- SUPPORTED: "supports the claim", "directly supports", "confirms the claim", "evidence supports"
+- REFUTED: "contradicts the claim", "refutes the claim", "inconsistent with", "does not support"
+
 **Verdict types**:
 
 | Verdict | Meaning |
@@ -114,6 +127,33 @@ REASONING: [one sentence explanation]
 | SUPPORTED | Evidence confirms the claim |
 | REFUTED | Evidence contradicts the claim |
 | NOT_ENOUGH_INFO | Insufficient evidence |
+
+## Web Demo
+
+The project includes a Flask web application (`app.py`) with a visual interface following the [Wikimedia Codex](https://doc.wikimedia.org/codex/) design system.
+
+```bash
+python app.py
+# → http://localhost:5001
+```
+
+**Design tokens**: Wikimedia blue `#3366CC`, system fonts, `2px` border-radius, accessible color contrast (WCAG 2.2 AA).
+
+**Components**:
+- `cdx-text-input` — Claim input field
+- `cdx-button--action-progressive` — Check button (Wikimedia blue)
+- `cdx-card` — Result and search cards
+- Status colors: green (SUPPORTED), red (REFUTED), yellow (NOT_ENOUGH_INFO)
+
+**Endpoints**:
+
+| Route | Method | Description |
+|-------|--------|-------------|
+| `/` | GET | Main page with claim input |
+| `/check` | POST | Form submission, returns rendered result |
+| `/api/check` | GET/POST | JSON API for programmatic use |
+
+**Lazy model loading**: Models are loaded on the first claim check, not at startup. This keeps server startup fast (~1s) while the first query takes ~10–15s for model initialization + API calls + inference.
 
 ## Example Walkthrough
 
@@ -134,6 +174,15 @@ REASONING: [one sentence explanation]
 - **Graceful degradation**: Missing components return `NOT_ENOUGH_INFO` instead of errors
 - **Lazy loading**: Models loaded on first use, not at import time
 - **Thread-safe cache**: Label resolution cache uses locking for concurrent access
+- **Robust parsing**: Multi-strategy verdict extraction handles diverse LLM output formats
+
+## Configuration
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `OLLAMA_URL` | `http://localhost:11434` | Ollama server endpoint |
+
+The default LLM model is `qwen2.5:7b`, configurable via the `model` parameter in `HybridFactChecker`.
 
 ## Limitations
 
