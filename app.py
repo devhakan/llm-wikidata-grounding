@@ -140,4 +140,5 @@ if __name__ == "__main__":
     print("  LLM Wikidata Grounding — Web Demo")
     print("  http://localhost:5001")
     print("=" * 60 + "\n")
-    app.run(debug=True, host="0.0.0.0", port=5001)
+    # debug=False + use_reloader=False to prevent loading models twice
+    app.run(debug=False, host="0.0.0.0", port=5001)

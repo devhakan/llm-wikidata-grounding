@@ -142,25 +142,57 @@ class OllamaClassifier:
             )
 
     def _parse_response(self, text: str) -> ClassificationResult:
-        """Parse LLM response into structured result."""
-        text_upper = text.upper()
+        """Parse LLM response into structured result.
+        
+        Handles multiple response formats from various LLMs:
+        - Exact format: VERDICT: SUPPORTED
+        - Standalone keyword: SUPPORTED (anywhere in first line)
+        - Reasoning-based: "...supports the claim..." → SUPPORTED
+        """
+        text_clean = text.strip().strip("[]\"'")
+        text_upper = text_clean.upper()
 
-        # Extract verdict
+        # Strategy 1: Look for explicit "VERDICT: X" format
         verdict = Verdict.NOT_ENOUGH_INFO
         if "VERDICT: SUPPORTED" in text_upper or "VERDICT:SUPPORTED" in text_upper:
             verdict = Verdict.SUPPORTED
         elif "VERDICT: REFUTED" in text_upper or "VERDICT:REFUTED" in text_upper:
             verdict = Verdict.REFUTED
+        elif "VERDICT: NOT_ENOUGH_INFO" in text_upper or "VERDICT:NOT_ENOUGH_INFO" in text_upper:
+            verdict = Verdict.NOT_ENOUGH_INFO
+
+        # Strategy 2: Check for standalone keywords (first 200 chars)
+        if verdict == Verdict.NOT_ENOUGH_INFO:
+            head = text_upper[:200]
+            if "SUPPORTED" in head and "NOT" not in head.split("SUPPORTED")[0][-5:]:
+                verdict = Verdict.SUPPORTED
+            elif "REFUTED" in head:
+                verdict = Verdict.REFUTED
+
+        # Strategy 3: Infer from reasoning text
+        if verdict == Verdict.NOT_ENOUGH_INFO:
+            lower = text_clean.lower()
+            support_phrases = ["supports the claim", "directly supports", "confirms the claim",
+                               "is supported", "evidence supports", "consistent with"]
+            refute_phrases = ["contradicts the claim", "refutes the claim", "is refuted",
+                              "evidence contradicts", "inconsistent with", "does not support"]
+            if any(p in lower for p in support_phrases):
+                verdict = Verdict.SUPPORTED
+            elif any(p in lower for p in refute_phrases):
+                verdict = Verdict.REFUTED
 
         # Extract confidence
         confidence: float = _CONFIDENCE_MAP.get("LOW", 0.5)
+        if verdict != Verdict.NOT_ENOUGH_INFO:
+            # If we found a clear verdict, default to HIGH confidence
+            confidence = _CONFIDENCE_MAP.get("HIGH", 0.9)
         for level, score in _CONFIDENCE_MAP.items():
             if f"CONFIDENCE: {level}" in text_upper:
                 confidence = score
                 break
 
         # Extract reasoning
-        reasoning = self._extract_reasoning(text)
+        reasoning = self._extract_reasoning(text_clean)
 
         return ClassificationResult(
             verdict=verdict,
@@ -174,15 +206,24 @@ class OllamaClassifier:
         """Extract the reasoning sentence from LLM response."""
         marker = "REASONING:"
         idx = text.upper().find(marker)
-        if idx == -1:
-            return ""
+        if idx != -1:
+            reasoning = text[idx + len(marker):].strip()
+            # Take first sentence only
+            dot_idx = reasoning.find(".")
+            if dot_idx != -1:
+                reasoning = reasoning[:dot_idx + 1]
+            return reasoning
 
-        reasoning = text[idx + len(marker):].strip()
-        # Take first sentence only
-        dot_idx = reasoning.find(".")
-        if dot_idx != -1:
-            reasoning = reasoning[:dot_idx + 1]
-        return reasoning
+        # Fallback: use the full text, stripping any verdict/confidence lines
+        lines = text.strip().splitlines()
+        reasoning_lines = []
+        for line in lines:
+            upper = line.strip().upper()
+            if upper.startswith("VERDICT:") or upper.startswith("CONFIDENCE:"):
+                continue
+            if line.strip():
+                reasoning_lines.append(line.strip())
+        return " ".join(reasoning_lines)[:500] if reasoning_lines else ""
 
     def is_available(self) -> bool:
         """Check if Ollama is running and model is available."""
