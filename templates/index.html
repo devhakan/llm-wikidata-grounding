@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Wikidata Grounding — Fact Checker</title>
+    <meta name="description" content="Verify claims against Wikidata using vector search, reranking, and LLM reasoning.">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- Loading Overlay -->
+<div class="loading-overlay" id="loading">
+    <div class="loading-card">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">Checking claim against Wikidata…</div>
+        <div class="loading-steps" id="loadingSteps">🔍 Searching entities…</div>
+    </div>
+</div>
+
+<div class="container">
+
+    <!-- Header -->
+    <header class="header">
+        <div class="header__logo">
+            <div class="header__icon">🔬</div>
+            <h1 class="header__title">LLM Wikidata Grounding</h1>
+        </div>
+        <p class="header__subtitle">Verify claims against Wikidata's structured knowledge</p>
+        <div class="header__badge">
+            🏆 Wikimedia Hackathon NWE 2026 — Arnhem
+        </div>
+    </header>
+
+    <!-- Error Message -->
+    {% if error %}
+    <div class="error-msg">⚠️ {{ error }}</div>
+    {% endif %}
+
+    <!-- Search Form -->
+    <div class="cdx-card search-card">
+        <form class="search-form" method="POST" action="/check" id="checkForm">
+            <input
+                type="text"
+                name="claim"
+                class="cdx-text-input"
+                placeholder="Enter a claim to verify… e.g. 'Marie Curie won two Nobel Prizes'"
+                value="{{ claim or '' }}"
+                required
+                autofocus
+                id="claimInput"
+            >
+            <button type="submit" class="cdx-button--action-progressive">Check</button>
+        </form>
+
+        <!-- Sample Claims -->
+        <div class="samples">
+            <div class="samples__label">Try these examples</div>
+            <div class="samples__grid">
+                {% for sample in samples %}
+                <button type="button" class="sample-chip" onclick="useSample(this)" data-claim="{{ sample.claim }}">
+                    {{ sample.claim }}
+                    <span class="sample-chip__hint">{{ sample.hint }}</span>
+                </button>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Result Card -->
+    {% if result %}
+    {% set verdict_class = 'supported' if result.verdict == 'SUPPORTED' else ('refuted' if result.verdict == 'REFUTED' else 'nei') %}
+    {% set verdict_icon = '✓' if result.verdict == 'SUPPORTED' else ('✗' if result.verdict == 'REFUTED' else '?') %}
+    <div class="cdx-card result-card">
+        <div class="result-card__header result-card__header--{{ verdict_class }}">
+            <span class="verdict-badge verdict-badge--{{ verdict_class }}">
+                {{ verdict_icon }} {{ result.verdict }}
+            </span>
+            <div class="result-meta">
+                <div>
+                    <span style="font-weight: 700;">{{ (result.confidence * 100) | int }}%</span>
+                    confidence
+                </div>
+                <div class="confidence-bar">
+                    <div
+                        class="confidence-bar__fill confidence-bar__fill--{{ verdict_class }}"
+                        style="width: {{ (result.confidence * 100) | int }}%"
+                    ></div>
+                </div>
+                {% if elapsed %}
+                <div>⏱ {{ elapsed }}s</div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="result-card__body">
+            <div class="result-claim">"{{ result.claim }}"</div>
+            {% if result.reasoning %}
+            <div class="result-reasoning">{{ result.reasoning }}</div>
+            {% endif %}
+        </div>
+
+        {% if result.evidence %}
+        <div class="evidence-section">
+            <div class="evidence-title">
+                📋 Evidence from Wikidata ({{ result.evidence | length }} statements)
+            </div>
+            <ul class="evidence-list">
+                {% for e in result.evidence[:8] %}
+                <li class="evidence-item">{{ e }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        <!-- Pipeline visualization -->
+        <div class="pipeline">
+            <span class="pipeline__step pipeline__step--active">🔍 Vector Search</span>
+            <span class="pipeline__arrow">→</span>
+            <span class="pipeline__step pipeline__step--active">📊 {{ result.entities_found | length }} entities</span>
+            <span class="pipeline__arrow">→</span>
+            <span class="pipeline__step pipeline__step--active">🎯 Rerank</span>
+            <span class="pipeline__arrow">→</span>
+            <span class="pipeline__step pipeline__step--active">🤖 LLM</span>
+            <span class="pipeline__arrow">→</span>
+            <span class="pipeline__step pipeline__step--active">{{ verdict_icon }} {{ result.verdict }}</span>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Footer -->
+    <footer class="footer">
+        <p>
+            Built by <a href="https://www.wikidata.org/wiki/User:HakanIST" target="_blank">HakanIST</a>
+            · Powered by <a href="https://www.wikidata.org" target="_blank">Wikidata</a>
+            · <a href="/api/check?claim=test" target="_blank">API</a>
+            · <a href="https://github.com/devhakan/llm-wikidata-grounding" target="_blank">GitHub</a>
+        </p>
+    </footer>
+
+</div>
+
+<script>
+function useSample(el) {
+    document.getElementById('claimInput').value = el.dataset.claim;
+    document.getElementById('checkForm').submit();
+}
+
+const form = document.getElementById('checkForm');
+const loading = document.getElementById('loading');
+const steps = document.getElementById('loadingSteps');
+const msgs = [
+    '🔍 Searching Wikidata entities…',
+    '📊 Retrieving statements…',
+    '🎯 Reranking by relevance…',
+    '🤖 LLM analyzing evidence…',
+];
+
+form.addEventListener('submit', function() {
+    if (!document.getElementById('claimInput').value.trim()) return;
+    loading.classList.add('active');
+    let i = 0;
+    setInterval(() => {
+        if (i < msgs.length) { steps.textContent = msgs[i]; i++; }
+    }, 2000);
+});
+</script>
+
+</body>
+</html>
