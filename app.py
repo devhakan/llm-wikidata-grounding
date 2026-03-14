@@ -10,6 +10,7 @@ import sys
 import os
 import time
 import logging
+import threading
 
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
@@ -65,17 +66,21 @@ def format_evidence(raw: str) -> dict:
 # Register as Jinja filter
 app.jinja_env.filters['format_evidence'] = format_evidence
 
-# Lazy-loaded checker
+# Thread-safe lazy-loaded checker
 _checker = None
+_checker_lock = threading.Lock()
 
 
 def get_checker():
-    """Get or create the fact checker instance."""
+    """Get or create the fact checker instance (thread-safe)."""
     global _checker
     if _checker is None:
-        logger.info("Initializing fact checker (loading models)...")
-        _checker = HybridFactChecker(verbose=False)
-        logger.info("Fact checker ready.")
+        with _checker_lock:
+            # Double-check after acquiring lock
+            if _checker is None:
+                logger.info("Initializing fact checker (loading models)...")
+                _checker = HybridFactChecker(verbose=False)
+                logger.info("Fact checker ready.")
     return _checker
 
 

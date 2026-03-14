@@ -14,6 +14,7 @@ License: MIT
 """
 
 import logging
+import threading
 from typing import Optional
 from dataclasses import dataclass
 
@@ -74,6 +75,7 @@ class Reranker:
         self.threshold = threshold
         self.model_name = model_name
         self._model = None
+        self._model_lock = threading.Lock()
 
         if not HAS_SENTENCE_TRANSFORMERS:
             logger.warning(
@@ -82,11 +84,13 @@ class Reranker:
 
     @property
     def model(self):
-        """Lazy load the model on first use."""
+        """Lazy load the model on first use (thread-safe)."""
         if self._model is None and HAS_SENTENCE_TRANSFORMERS:
-            logger.info("Loading reranker model: %s...", self.model_name)
-            self._model = CrossEncoder(self.model_name)
-            logger.info("Reranker model loaded.")
+            with self._model_lock:
+                if self._model is None:
+                    logger.info("Loading reranker model: %s...", self.model_name)
+                    self._model = CrossEncoder(self.model_name)
+                    logger.info("Reranker model loaded.")
         return self._model
 
     def _score_pairs(self, pairs: list[tuple[str, str]]) -> np.ndarray:
