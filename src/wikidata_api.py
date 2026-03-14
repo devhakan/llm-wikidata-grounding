@@ -19,8 +19,11 @@ License: MIT
 
 import re
 import logging
+import threading
 import requests
-from typing import Dict, List, Optional, Any
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+from typing import Any
 from urllib.parse import urlencode
 
 logger = logging.getLogger(__name__)
@@ -39,27 +42,73 @@ USER_AGENT = "LLM-Wikidata-Grounding/1.0 (https://github.com/devhakan/llm-wikida
 # Maximum IDs per wbgetentities batch (Wikidata API limit)
 _BATCH_SIZE = 50
 
-# Module-level cache for resolved entity/property labels
-_label_cache: Dict[str, str] = {}
+
+# =============================================================================
+# Thread-Safe Label Cache
+# =============================================================================
+
+class _LabelCache:
+    """Thread-safe cache for resolved entity/property labels."""
+
+    def __init__(self):
+        self._data: dict[str, str] = {}
+        self._lock = threading.Lock()
+
+    def get(self, key: str, default: str = "") -> str:
+        with self._lock:
+            return self._data.get(key, default)
+
+    def __contains__(self, key: str) -> bool:
+        with self._lock:
+            return key in self._data
+
+    def __setitem__(self, key: str, value: str):
+        with self._lock:
+            self._data[key] = value
+
+    def clear(self):
+        with self._lock:
+            self._data.clear()
+
+
+_label_cache = _LabelCache()
+
+
+# =============================================================================
+# HTTP Session with Retry
+# =============================================================================
+
+def _create_session() -> requests.Session:
+    """Create an HTTP session with retry and backoff for Wikidata APIs."""
+    session = requests.Session()
+    retry = Retry(
+        total=3,
+        backoff_factor=0.5,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["GET", "POST"],
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    session.headers.update({"User-Agent": USER_AGENT})
+    return session
+
+
+_session = _create_session()
 
 
 # =============================================================================
 # Internal Helpers
 # =============================================================================
 
-def _wikidata_get(params: Dict[str, Any], timeout: int = 30) -> requests.Response:
-    """Make a GET request to the Wikidata API with standard headers."""
-    response = requests.get(
-        WD_API_URI,
-        params=params,
-        headers={"User-Agent": USER_AGENT},
-        timeout=timeout,
-    )
+def _wikidata_get(params: dict[str, Any], timeout: int = 30) -> requests.Response:
+    """Make a GET request to the Wikidata API with retry support."""
+    response = _session.get(WD_API_URI, params=params, timeout=timeout)
     response.raise_for_status()
     return response
 
 
-def _format_id_with_label(entity_id: str, resolved: Dict[str, str]) -> str:
+def _format_id_with_label(entity_id: str, resolved: dict[str, str]) -> str:
     """Format an entity ID with its resolved label: 'label (ID)' or just 'ID'."""
     label = resolved.get(entity_id, entity_id)
     if label != entity_id:
@@ -67,7 +116,7 @@ def _format_id_with_label(entity_id: str, resolved: Dict[str, str]) -> str:
     return entity_id
 
 
-def _format_datavalue(datavalue: Dict, resolved: Dict[str, str]) -> str:
+def _format_datavalue(datavalue: dict, resolved: dict[str, str]) -> str:
     """
     Convert a Wikidata datavalue to a human-readable string.
 
@@ -81,7 +130,7 @@ def _format_datavalue(datavalue: Dict, resolved: Dict[str, str]) -> str:
         return _format_id_with_label(value.get("id", ""), resolved)
 
     if value_type == "time":
-        return value.get("time", "")[:10].replace("+", "")
+        return value.get("time", "").replace("+", "")[:10]
 
     if value_type in ("string", "monolingualtext"):
         return value if isinstance(value, str) else value.get("text", str(value))
@@ -101,7 +150,7 @@ def search_entities(
     entity_type: str = "item",
     limit: int = 10,
     language: str = "en",
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Search Wikidata for entities by name using keyword matching.
 
@@ -151,7 +200,7 @@ def vector_search(
     limit: int = 20,
     language: str = "en",
     entity_type: str = "item",
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Search Wikidata using semantic similarity (vector embeddings).
 
@@ -175,10 +224,9 @@ def vector_search(
     endpoint = "item" if entity_type == "item" else "property"
 
     try:
-        response = requests.get(
+        response = _session.get(
             f"{WD_VECTORDB_URI}/{endpoint}/query",
             params={"query": query, "lang": language, "limit": limit},
-            headers={"User-Agent": USER_AGENT},
             timeout=30,
         )
         response.raise_for_status()
@@ -197,7 +245,7 @@ def vector_search(
             for r in results
         ]
 
-    except Exception as e:
+    except (requests.RequestException, ConnectionError, ValueError, KeyError) as e:
         logger.warning("Vector search failed: %s. Falling back to keyword search.", e)
         return search_entities(query, limit=limit, language=language)
 
@@ -207,9 +255,9 @@ def vector_search(
 # =============================================================================
 
 def resolve_labels(
-    ids: List[str],
+    ids: list[str],
     language: str = "en",
-) -> Dict[str, str]:
+) -> dict[str, str]:
     """
     Resolve multiple Wikidata IDs to their labels in a single API call.
 
@@ -228,8 +276,6 @@ def resolve_labels(
         >>> print(labels)
         {"P106": "occupation", "Q169470": "physicist"}
     """
-    global _label_cache
-
     uncached = [
         i for i in ids
         if i and i not in _label_cache and re.match(r'^[PQ]\d+$', i)
@@ -255,7 +301,7 @@ def resolve_labels(
             for eid, edata in entities.items():
                 label = edata.get("labels", {}).get(language, {}).get("value", "")
                 _label_cache[eid] = label if label else eid
-        except Exception:
+        except (requests.RequestException, ConnectionError, ValueError, KeyError):
             for eid in batch:
                 _label_cache[eid] = eid
 
@@ -266,7 +312,7 @@ def resolve_labels(
 # Entity Claims
 # =============================================================================
 
-def _collect_ids_from_claims(claims: Dict) -> set:
+def _collect_ids_from_claims(claims: dict) -> set:
     """Collect all entity/property IDs from claims for batch label resolution."""
     ids = set(claims.keys())
 
@@ -292,7 +338,7 @@ def _collect_ids_from_claims(claims: Dict) -> set:
     return ids
 
 
-def _build_statement(subject: str, prop_display: str, value_str: str) -> Dict[str, str]:
+def _build_statement(subject: str, prop_display: str, value_str: str) -> dict[str, str]:
     """Create a statement dictionary with consistent format."""
     return {
         "subject": subject,
@@ -305,7 +351,7 @@ def _build_statement(subject: str, prop_display: str, value_str: str) -> Dict[st
 def get_entity_claims(
     entity_id: str,
     language: str = "en",
-) -> List[Dict[str, str]]:
+) -> list[dict[str, str]]:
     """
     Get all claims (facts) about a Wikidata entity.
 
@@ -371,7 +417,7 @@ def get_entity_claims(
 
         return statements
 
-    except Exception as e:
+    except (requests.RequestException, ConnectionError, ValueError, KeyError) as e:
         logger.warning("Native API failed for %s: %s. Falling back to Textify.", entity_id, e)
         return _get_entity_claims_textify(entity_id, language)
 
@@ -379,7 +425,7 @@ def get_entity_claims(
 def _get_entity_claims_textify(
     entity_id: str,
     language: str = "en",
-) -> List[Dict[str, str]]:
+) -> list[dict[str, str]]:
     """Fallback: Get claims via Textify service."""
     params = {
         "id": entity_id,
@@ -390,14 +436,9 @@ def _get_entity_claims_textify(
     }
 
     try:
-        response = requests.get(
-            WD_TEXTIFY_URI,
-            params=params,
-            headers={"User-Agent": USER_AGENT},
-            timeout=30,
-        )
+        response = _session.get(WD_TEXTIFY_URI, params=params, timeout=30)
         response.raise_for_status()
-    except Exception as e:
+    except requests.RequestException as e:
         logger.warning("Textify API failed for %s: %s", entity_id, e)
         return []
 
@@ -424,7 +465,7 @@ def _get_entity_claims_textify(
 # SPARQL Queries
 # =============================================================================
 
-def execute_sparql(query: str, limit: int = 100) -> List[Dict[str, Any]]:
+def execute_sparql(query: str, limit: int = 100) -> list[dict[str, Any]]:
     """
     Execute a SPARQL query against Wikidata.
 
@@ -451,9 +492,8 @@ def execute_sparql(query: str, limit: int = 100) -> List[Dict[str, Any]]:
     params = urlencode({"query": query, "format": "json"})
     url = f"{WD_QUERY_URI}?{params}"
 
-    response = requests.get(
+    response = _session.get(
         url,
-        headers={"User-Agent": USER_AGENT},
         timeout=60,
     )
 
@@ -477,7 +517,7 @@ def execute_sparql(query: str, limit: int = 100) -> List[Dict[str, Any]]:
 # Utility Functions
 # =============================================================================
 
-def extract_qids_from_text(text: str) -> List[str]:
+def extract_qids_from_text(text: str) -> list[str]:
     """Extract all Wikidata QIDs from text."""
     return re.findall(r"Q\d+", text)
 

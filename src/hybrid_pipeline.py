@@ -17,10 +17,10 @@ import sys
 import os
 import logging
 from dataclasses import dataclass
-from typing import List
 
-# Handle imports when run as script
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Add src directory to path when run as a script
+if __name__ == "__main__" or __package__ is None:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from wikidata_api import vector_search, get_entity_claims
 from reranker import Reranker
@@ -39,11 +39,11 @@ class FactCheckResult:
     verdict: str
     confidence: float
     reasoning: str
-    evidence: List[str]
-    entities_found: List[str]
+    evidence: list[str]
+    entities_found: list[str]
 
 
-def _not_enough_info(claim: str, reasoning: str, entities: List[str] = None) -> FactCheckResult:
+def _not_enough_info(claim: str, reasoning: str, entities: list[str] | None = None) -> FactCheckResult:
     """Create a NOT_ENOUGH_INFO result (used when pipeline cannot proceed)."""
     return FactCheckResult(
         claim=claim,
@@ -92,10 +92,11 @@ class HybridFactChecker:
         return self._classifier
 
     def _log(self, msg: str):
-        """Log verbose output to both logger and stdout."""
+        """Log verbose output."""
         if self.verbose:
-            print(msg)
-        logger.debug(msg)
+            logger.info(msg)
+        else:
+            logger.debug(msg)
 
     def check(self, claim: str, top_k: int = 10) -> FactCheckResult:
         """

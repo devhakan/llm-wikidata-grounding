@@ -16,6 +16,7 @@ Usage:
 
 import sys
 import os
+import argparse
 
 
 def check_python_version():
@@ -179,23 +180,38 @@ def check_src_import():
 
 def main():
     """Run all verification checks."""
+    parser = argparse.ArgumentParser(description="Verify llm-wikidata-grounding setup")
+    parser.add_argument(
+        "--fail-fast", action="store_true",
+        help="Stop at the first failing check",
+    )
+    args = parser.parse_args()
+
     print("=" * 60)
     print("LLM Wikidata Grounding - Setup Verification")
     print("=" * 60)
     print()
-    
-    results = [
-        check_python_version(),
-        check_dependencies(),
-        check_wikidata(),
-        check_vector_search(),
-        check_ollama(),
-        check_src_import(),
+
+    checks = [
+        check_python_version,
+        check_dependencies,
+        check_wikidata,
+        check_vector_search,
+        check_ollama,
+        check_src_import,
     ]
-    
+
+    results = []
+    for check in checks:
+        result = check()
+        results.append(result)
+        if args.fail_fast and not result:
+            print(f"\n⚠ --fail-fast: stopping after failed check.")
+            break
+
     print()
     print("=" * 60)
-    
+
     passed = sum(results)
     total = len(results)
     

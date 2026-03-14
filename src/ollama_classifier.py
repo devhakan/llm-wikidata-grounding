@@ -9,6 +9,7 @@ License: MIT
 """
 
 import logging
+import os
 import requests
 from enum import Enum
 from dataclasses import dataclass
@@ -36,7 +37,7 @@ class ClassificationResult:
 # Configuration
 # =============================================================================
 
-DEFAULT_OLLAMA_URL = "http://localhost:11434"
+DEFAULT_OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 DEFAULT_MODEL = "qwen2.5:7b"
 
 # Map confidence words to numeric values
@@ -152,7 +153,7 @@ class OllamaClassifier:
             verdict = Verdict.REFUTED
 
         # Extract confidence
-        confidence = _CONFIDENCE_MAP.get("LOW")  # default
+        confidence: float = _CONFIDENCE_MAP.get("LOW", 0.5)
         for level, score in _CONFIDENCE_MAP.items():
             if f"CONFIDENCE: {level}" in text_upper:
                 confidence = score

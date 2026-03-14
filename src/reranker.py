@@ -14,7 +14,7 @@ License: MIT
 """
 
 import logging
-from typing import List, Dict, Tuple, Optional
+from typing import Optional
 from dataclasses import dataclass
 
 import numpy as np
@@ -45,7 +45,7 @@ class RankedStatement:
     """A statement with its relevance score (0-1)."""
     text: str
     score: float
-    original: Optional[Dict] = None
+    original: Optional[dict] = None
 
     def __repr__(self):
         return f"RankedStatement(score={self.score:.3f}, text='{self.text[:50]}...')"
@@ -89,17 +89,23 @@ class Reranker:
             logger.info("Reranker model loaded.")
         return self._model
 
-    def _score_pairs(self, pairs: List[Tuple[str, str]]) -> np.ndarray:
-        """Score (claim, statement) pairs and normalize to 0-1 via sigmoid."""
+    def _score_pairs(self, pairs: list[tuple[str, str]]) -> np.ndarray:
+        """
+        Score (claim, statement) pairs and normalize to 0-1.
+
+        Uses sigmoid normalization because MS-MARCO cross-encoder models
+        output raw logits (unbounded). Sigmoid maps these to probabilities
+        in [0, 1], making threshold-based filtering meaningful.
+        """
         raw_scores = self.model.predict(pairs)
         return 1 / (1 + np.exp(-raw_scores))
 
     def _filter_and_sort(
         self,
-        ranked: List[RankedStatement],
+        ranked: list[RankedStatement],
         threshold: Optional[float],
         top_k: Optional[int],
-    ) -> List[RankedStatement]:
+    ) -> list[RankedStatement]:
         """Sort by score descending, apply threshold and top_k limits."""
         effective_threshold = threshold if threshold is not None else self.threshold
         ranked.sort(key=lambda x: x.score, reverse=True)
@@ -111,10 +117,10 @@ class Reranker:
     def rerank(
         self,
         claim: str,
-        statements: List[str],
+        statements: list[str],
         top_k: Optional[int] = None,
         threshold: Optional[float] = None,
-    ) -> List[RankedStatement]:
+    ) -> list[RankedStatement]:
         """
         Rerank statements by relevance to the claim.
 
@@ -147,10 +153,10 @@ class Reranker:
     def rerank_with_metadata(
         self,
         claim: str,
-        statements: List[Dict],
+        statements: list[dict],
         text_key: str = "text",
         top_k: Optional[int] = None,
-    ) -> List[RankedStatement]:
+    ) -> list[RankedStatement]:
         """
         Rerank statement dictionaries, preserving metadata.
 
@@ -191,10 +197,10 @@ class Reranker:
 
 def filter_relevant_statements(
     claim: str,
-    statements: List[str],
+    statements: list[str],
     threshold: float = DEFAULT_RELEVANCE_THRESHOLD,
     top_k: int = 10,
-) -> List[Tuple[str, float]]:
+) -> list[tuple[str, float]]:
     """
     Filter statements to keep only those relevant to the claim.
 
